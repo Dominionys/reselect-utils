@@ -1,38 +1,69 @@
 // eslint-disable-next-line import/no-extraneous-dependencies
-import ts from 'typescript';
+import ts, { factory } from 'typescript';
+
+function updateCallExpression(node: ts.CallExpression, paths: string[]) {
+  const options = node.arguments[0];
+
+  if (ts.isObjectLiteralExpression(options)) {
+    return factory.updateCallExpression(
+      node,
+      node.expression,
+      node.typeArguments,
+      [
+        factory.updateObjectLiteralExpression(options, [
+          ...options.properties,
+          factory.createPropertyAssignment(
+            'keySelector',
+            factory.createCallExpression(
+              factory.createIdentifier('composeKeySelectors'),
+              undefined,
+              paths.map((path) =>
+                factory.createCallExpression(
+                  factory.createPropertyAccessExpression(
+                    factory.createCallExpression(
+                      factory.createIdentifier('prop'),
+                      undefined,
+                      [],
+                    ),
+                    path,
+                  ),
+                  undefined,
+                  [],
+                ),
+              ),
+            ),
+          ),
+        ]),
+      ],
+    );
+  }
+
+  return node;
+}
 
 function visitNode(node: ts.Node, program: ts.Program): ts.Node | undefined {
   const checker = program.getTypeChecker();
 
-  if (ts.isCallExpression(node)) {
-    if (node.expression.getText() !== 'createCachedSelector') {
+  if (ts.isCallExpression(node) && ts.isCallExpression(node.expression)) {
+    if (node.expression.expression.getText() !== 'createCachedSelector') {
       return node;
     }
-    const signage = checker.getResolvedSignature(node);
+
+    const signage = checker.getResolvedSignature(node.expression);
     if (signage) {
       const type = checker.getReturnTypeOfSignature(signage);
-      const propAliasTypeArgument = type.aliasTypeArguments?.[1];
-      if (type && propAliasTypeArgument) {
-        const properties = checker.getPropertiesOfType(propAliasTypeArgument);
-        const paths: string[] = [];
 
-        // eslint-disable-next-line no-restricted-syntax
-        for (const property of properties) {
-          // const propertyType = checker.getTypeOfSymbolAtLocation(
-          //   property,
-          //   property.valueDeclaration,
-          // );
-          // const propertyTypeName = (propertyType as any).intrinsicName;
-          // checker.getTypeFromTypeNode(property.valueDeclaration.type).getNonNullableType().getSymbol().getName()
-          // const propertyName = checker.symbolToString(property);
-          const name = property.getName();
+      if (type.aliasSymbol?.getName() === 'OutputParametricCachedSelector') {
+        const propAliasTypeArgument = type.aliasTypeArguments?.[1];
 
-          paths.push(name);
-          // console.log(type);
-          // console.log(properties);
-          // console.log(name, propertyType, propertyName);
+        if (type && propAliasTypeArgument) {
+          const properties = checker.getPropertiesOfType(propAliasTypeArgument);
+
+          const paths = properties.map((property) => property.getName());
+          return updateCallExpression(node, paths);
         }
-        console.log(paths);
+
+        return node;
       }
     }
     return node;
@@ -56,7 +87,6 @@ function visitNodeAndChildren(
   context: ts.TransformationContext,
 ): ts.Node | undefined {
   return ts.visitEachChild(
-    // eslint-disable-next-line @typescript-eslint/no-use-before-define
     visitNode(node, program),
     (childNode) => visitNodeAndChildren(childNode, program, context),
     context,
@@ -66,6 +96,26 @@ function visitNodeAndChildren(
 export default function transformer(
   program: ts.Program,
 ): ts.TransformerFactory<ts.SourceFile> {
-  return (context: ts.TransformationContext) => (file: ts.SourceFile) =>
-    visitNodeAndChildren(file, program, context);
+  return (context: ts.TransformationContext) => (file: ts.SourceFile) => {
+    const sourceFile = visitNodeAndChildren(file, program, context);
+
+    return factory.updateSourceFile(sourceFile, [
+      factory.createImportDeclaration(
+        /* decorators */ undefined,
+        /* modifiers */ undefined,
+        factory.createImportClause(
+          false,
+          undefined,
+          factory.createNamedImports([
+            factory.createImportSpecifier(
+              undefined,
+              factory.createIdentifier('prop'),
+            ),
+          ]),
+        ),
+        factory.createStringLiteral('reselect-utils'),
+      ),
+      ...sourceFile.statements,
+    ]);
+  };
 }

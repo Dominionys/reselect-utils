@@ -4,7 +4,7 @@ import transformer from './transformer';
 
 export function compile(
   filePaths: string[],
-  target = ts.ScriptTarget.ES5,
+  target = ts.ScriptTarget.ES2015,
   writeFileCallback?: ts.WriteFileCallback,
 ) {
   const program = ts.createProgram(filePaths, {
@@ -12,6 +12,7 @@ export function compile(
     noEmitOnError: true,
     suppressImplicitAnyIndexErrors: true,
     esModuleInterop: true,
+    moduleResolution: ts.ModuleResolutionKind.NodeJs,
     target,
   });
   const transformers: ts.CustomTransformers = {
